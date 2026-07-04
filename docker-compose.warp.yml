@@ -89,6 +89,7 @@ services:
     image: chatgpt2api:warp
     container_name: chatgpt2api-warp
     restart: unless-stopped
+    network_mode: host
     depends_on:
       init-config:
         condition: service_completed_successfully
@@ -96,12 +97,17 @@ services:
         condition: service_started
       flaresolverr:
         condition: service_started
-    ports:
-      - "${CHATGPT2API_PORT:-3000}:80"
+    command: ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${CHATGPT2API_PORT:-3000}", "--access-log"]
     volumes:
       - ./data:/app/data
       - ./config.json:/app/config.json
+      - ./services/log_service.py:/app/services/log_service.py
+      - ./services/config.py:/app/services/config.py
+      - ./api/app.py:/app/api/app.py
     environment:
+      HTTP_PROXY: http://127.0.0.1:7890
+      HTTPS_PROXY: http://127.0.0.1:7890
+      NO_PROXY: localhost,127.0.0.1,.local,.taildc3b1b.ts.net
       STORAGE_BACKEND: ${STORAGE_BACKEND:-json}
       DATABASE_URL: ${DATABASE_URL:-}
       CHATGPT2API_AUTH_KEY: ${CHATGPT2API_AUTH_KEY:-}

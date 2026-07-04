@@ -5,7 +5,7 @@ import json
 import itertools
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -109,6 +109,32 @@ class LogService:
         self.path.write_text(content, encoding="utf-8")
         return {"removed": removed}
 
+    def purge_old_logs(self, retention_days: int = 7) -> dict[str, int]:
+        """删除指定天数之前的日志行。"""
+        if retention_days <= 0 or not self.path.exists():
+            return {"removed": 0}
+        cutoff = datetime.now() - timedelta(days=retention_days)
+        cutoff_str = cutoff.strftime("%Y-%m-%d")
+        lines = self.path.read_text(encoding="utf-8").splitlines()
+        kept_lines: list[str] = []
+        removed = 0
+        for raw_line in lines:
+            try:
+                item = json.loads(raw_line)
+            except Exception:
+                kept_lines.append(raw_line)
+                continue
+            day = str(item.get("time") or "")[:10]
+            if day and day < cutoff_str:
+                removed += 1
+                continue
+            kept_lines.append(raw_line)
+        content = "\n".join(kept_lines)
+        if content:
+            content += "\n"
+        self.path.write_text(content, encoding="utf-8")
+        return {"removed": removed}
+
 
 log_service = LogService(DATA_DIR / "logs.jsonl")
 
@@ -169,11 +195,24 @@ def _strip_internal_response_fields(value: object) -> object:
     return value
 
 
-def _request_excerpt(text: object, limit: int = 1000) -> str:
+def _get_log_excerpt_limit() -> int:
+    """读取配置中的日志文本截断长度，默认 100000（约等于不截断）。"""
+    try:
+        from services.config import config
+        value = config.data.get("log_request_text_max_length", 100000)
+        return max(0, int(value))
+    except Exception:
+        return 100000
+
+
+def _request_excerpt(text: object) -> str:
     value = str(text or "").strip()
     if not value:
         return ""
     normalized = " ".join(value.split())
+    limit = _get_log_excerpt_limit()
+    if limit <= 0:
+        return normalized
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 1].rstrip() + "…"
@@ -335,3 +374,26 @@ class LoggedCall:
         if collected_urls and not self.endpoint.startswith("/v1/search"):
             detail["urls"] = list(dict.fromkeys(collected_urls))
         log_service.add(LOG_TYPE_CALL, f"{self.summary}{suffix}", detail)
+
+
+# ---- 日志轮转调度 ----
+
+import threading as _threading
+
+
+def _log_cleanup_worker(stop_event: _threading.Event) -> None:
+    """后台线程：每24小时清理过期日志。"""
+    while not stop_event.wait(86400):
+        try:
+            from services.config import config
+            removed = log_service.purge_old_logs(config.log_retention_days)
+            if removed["removed"]:
+                print(f"[log-cleanup] removed {removed['removed']} expired log entries")
+        except Exception:
+            pass
+
+
+def start_log_cleanup_scheduler(stop_event: _threading.Event) -> _threading.Thread:
+    t = _threading.Thread(target=_log_cleanup_worker, args=(stop_event,), daemon=True, name="log-cleanup")
+    t.start()
+    return t

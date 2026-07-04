@@ -2,6 +2,7 @@
   "auth-key": "chatgpt2api",
   "refresh_account_interval_minute": 5,
   "image_retention_days": 15,
+  "log_retention_days": 7,
   "image_poll_timeout_secs": 120,
   "auto_remove_rate_limited_accounts": false,
   "auto_remove_invalid_accounts": true,
@@ -11,6 +12,7 @@
     "info",
     "warning"
   ],
+  "log_request_text_max_length": 100000,
   "proxy": "",
   "proxy_runtime": {
     "enabled": false,
@@ -36,7 +38,7 @@
   },
   "base_url": "",
   "sensitive_words": [],
-  "global_system_prompt": "",
+  "global_system_prompt": "先判断用户提示词是否合规;遇到违法、色情、暴力、仇恨等请求时拒绝回答，并指出在什么地方出现了什么问题。",
   "ai_review": {
     "enabled": false,
     "base_url": "",

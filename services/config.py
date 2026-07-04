@@ -393,6 +393,13 @@ class ConfigStore:
             return 30
 
     @property
+    def log_retention_days(self) -> int:
+        try:
+            return max(0, int(self.data.get("log_retention_days", 7)))
+        except (TypeError, ValueError):
+            return 7
+
+    @property
     def image_poll_timeout_secs(self) -> int:
         try:
             return max(1, int(self.data.get("image_poll_timeout_secs", 120)))
