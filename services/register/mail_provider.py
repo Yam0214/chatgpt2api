@@ -958,6 +958,102 @@ class MoEmailProvider(BaseMailProvider):
         self.session.close()
 
 
+class CatchMailProvider(BaseMailProvider):
+    """catchmail.io — 免费临时邮箱，无需认证，1 req/s/IP 限速。"""
+    name = "catchmail"
+
+    def __init__(self, entry: dict, conf: dict):
+        super().__init__(conf, str(entry.get("provider_ref") or ""))
+        self.domain = [str(item).strip() for item in (entry.get("domain") or []) if str(item).strip()]
+        self.session = _create_session(conf)
+        self.session.headers.update({"User-Agent": conf["user_agent"], "Accept": "application/json"})
+
+    def _request(self, method: str, path: str, params: dict | None = None, expected: tuple[int, ...] = (200,)):
+        resp = self.session.request(method.upper(), f"https://api.catchmail.io{path}", params=params, timeout=self.conf["request_timeout"], verify=False)
+        if resp.status_code not in expected:
+            raise RuntimeError(f"CatchMail 请求失败: {method} {path}, HTTP {resp.status_code}, body={resp.text[:300]}")
+        return resp.json()
+
+    def create_mailbox(self, username: str | None = None) -> dict[str, Any]:
+        """catchmail.io 无需创建邮箱，直接生成随机地址即可。"""
+        domain = _next_domain(self.domain) if self.domain else "catchmail.io"
+        address = f"{username or _random_mailbox_name()}@{domain}"
+        # 验证邮箱是否可用（不报错即可）
+        try:
+            self._request("GET", "/api/v1/mailbox", params={"address": address})
+        except Exception:
+            pass  # 新地址首次查询返回空结果也正常
+        return {"provider": self.name, "provider_ref": self.provider_ref, "address": address}
+
+    def fetch_latest_message(self, mailbox: dict[str, Any]) -> dict[str, Any] | None:
+        address = str(mailbox["address"])
+        data = self._request("GET", "/api/v1/mailbox", params={"address": address, "page_size": 10})
+        messages = data.get("messages") or []
+        if not messages:
+            return None
+        item = messages[0]
+        msg_id = str(item.get("id") or "")
+        # 获取消息详情（含正文）
+        detail = self._request("GET", f"/api/v1/message/{msg_id}", params={"mailbox": address})
+        body = detail.get("body") or {}
+        return {"provider": self.name, "mailbox": address, "message_id": msg_id, "subject": str(item.get("subject") or ""), "sender": str(item.get("from") or ""), "text_content": str(body.get("text") or ""), "html_content": str(body.get("html") or ""), "received_at": _parse_received_at(item.get("date") or item.get("created_at")), "raw": detail}
+
+    def close(self) -> None:
+        self.session.close()
+
+
+class MailCxProvider(BaseMailProvider):
+    """mail.cx — 免费临时邮箱，无需认证，使用 X-Client-ID 标识。"""
+    name = "mailcx"
+
+    def __init__(self, entry: dict, conf: dict):
+        super().__init__(conf, str(entry.get("provider_ref") or ""))
+        self.domain = [str(item).strip() for item in (entry.get("domain") or []) if str(item).strip()]
+        self._client_id = f"{random.getrandbits(64):016x}{random.getrandbits(64):016x}"
+        self.session = _create_session(conf)
+        self.session.headers.update({"User-Agent": conf["user_agent"], "Accept": "application/json", "X-Client-ID": self._client_id})
+
+    def _request(self, method: str, path: str, params: dict | None = None, payload: dict | None = None, expected: tuple[int, ...] = (200, 204)):
+        resp = self.session.request(method.upper(), f"https://mail.cx{path}", params=params, json=payload, timeout=self.conf["request_timeout"], verify=False)
+        if resp.status_code not in expected:
+            raise RuntimeError(f"Mail.cx 请求失败: {method} {path}, HTTP {resp.status_code}, body={resp.text[:300]}")
+        return resp.json() if resp.status_code == 200 else {}
+
+    def create_mailbox(self, username: str | None = None) -> dict[str, Any]:
+        """mail.cx 无需创建邮箱，直接生成随机地址即可。"""
+        domain = _next_domain(self.domain) if self.domain else "mail.cx"
+        address = f"{username or _random_mailbox_name()}@{domain}"
+        return {"provider": self.name, "provider_ref": self.provider_ref, "address": address}
+
+    def fetch_latest_message(self, mailbox: dict[str, Any]) -> dict[str, Any] | None:
+        address = str(mailbox["address"])
+        data = self._request("GET", f"/v1/inbox/{__import__('urllib.parse').quote(address)}", expected=(200, 204))
+        # /v1/inbox 不返回 messages 结构，返回最新邮件列表或空
+        if isinstance(data, dict):
+            # 尝试从各 key 取消息列表
+            messages = data.get("messages") or data.get("emails") or data.get("results") or []
+        else:
+            messages = data if isinstance(data, list) else []
+        if not messages:
+            return None
+        item = messages[0] if isinstance(messages, list) else messages
+        msg_id = str(item.get("id") or "")
+        # 获取消息详情
+        detail = self._request("GET", f"/v1/email/{msg_id}", expected=(200, 204))
+        if not detail:
+            return None
+        body = detail.get("body") or detail or {}
+        if isinstance(body, dict):
+            text = str(body.get("text") or body.get("text_body") or body.get("plain") or "")
+            html = str(body.get("html") or body.get("html_body") or "")
+        else:
+            text, html = str(body), ""
+        return {"provider": self.name, "mailbox": address, "message_id": msg_id, "subject": str(detail.get("subject") or item.get("subject") or ""), "sender": str(detail.get("from") or item.get("from") or ""), "text_content": text, "html_content": html, "received_at": _parse_received_at(detail.get("date") or detail.get("created_at") or detail.get("timestamp") or item.get("date")), "raw": detail}
+
+    def close(self) -> None:
+        self.session.close()
+
+
 class InbucketMailProvider(BaseMailProvider):
     name = "inbucket"
 
@@ -1477,6 +1573,10 @@ def _create_provider(mail_config: dict, provider: str = "", provider_ref: str = 
         return GptMailProvider(entry, conf)
     if entry["type"] == "moemail":
         return MoEmailProvider(entry, conf)
+    if entry["type"] == "catchmail":
+        return CatchMailProvider(entry, conf)
+    if entry["type"] == "mailcx":
+        return MailCxProvider(entry, conf)
     if entry["type"] == "inbucket":
         return InbucketMailProvider(entry, conf)
     if entry["type"] == "yyds_mail":
