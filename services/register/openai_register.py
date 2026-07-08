@@ -535,56 +535,6 @@ class PlatformRegistrar:
         # 真正的判定交给 user/register（失败会 dump 完整响应）。
         step(index, f"platform authorize 完成[{landed or '?'}] url={str(getattr(resp, 'url', '') or '')[:160]}")
 
-    def _authorize_continue(self, email: str, index: int) -> None:
-        """补齐 authorize/continue 步骤（官方前端在 email submit 后发送）。"""
-        step(index, "开始 authorize/continue")
-        params = {
-            "issuer": auth_base,
-            "client_id": platform_oauth_client_id,
-            "audience": platform_oauth_audience,
-            "redirect_uri": platform_oauth_redirect_uri,
-            "device_id": self.device_id,
-            "screen_hint": "signup",
-            "max_age": "0",
-            "login_hint": email,
-            "scope": "openid profile email offline_access",
-            "response_type": "code",
-            "response_mode": "query",
-            "state": secrets.token_urlsafe(32),
-            "nonce": secrets.token_urlsafe(32),
-            "code_challenge": self.code_verifier,
-            "code_challenge_method": "S256",
-            "auth0Client": platform_auth0_client,
-        }
-        continue_url = f"{auth_base}/continue?{urlencode(params)}"
-        headers = self._json_headers(f"{auth_base}/authorize")
-        sentinel_val, so_token = build_sentinel_token(self.session, self.device_id, "authorize_continue")
-        headers["openai-sentinel-token"] = sentinel_val
-        if so_token:
-            headers["openai-sentinel-so-token"] = so_token
-        headers = _headers_with_clearance(headers, continue_url, self.proxy, self.clearance_user_agent)
-        resp, error = request_with_local_retry(self.session, "get", continue_url, headers=headers, allow_redirects=True, verify=False)
-        if _is_cloudflare_challenge(resp):
-            bundle = self._refresh_cloudflare_clearance(auth_base, index)
-            if bundle is None:
-                raise RuntimeError(_cloudflare_block_message(resp, reason=self.clearance_failure_reason))
-            headers = self._json_headers(f"{auth_base}/authorize")
-            sentinel_val, so_token = build_sentinel_token(self.session, self.device_id, "authorize_continue")
-            headers["openai-sentinel-token"] = sentinel_val
-            if so_token:
-                headers["openai-sentinel-so-token"] = so_token
-            headers = _headers_with_clearance(headers, continue_url, self.proxy, self.clearance_user_agent)
-            resp, error = request_with_local_retry(self.session, "get", continue_url, headers=headers, allow_redirects=True, verify=False)
-            if _is_cloudflare_challenge(resp):
-                raise RuntimeError(_cloudflare_block_message(resp, "Cloudflare clearance 重试仍被拦截"))
-        if resp is None or resp.status_code != 200:
-            err = _response_json(resp).get("error", {}) if resp is not None else {}
-            detail = f": {err.get('code', '')} - {err.get('message', '')}" if err else ""
-            debug = _response_debug_detail(resp)
-            status = getattr(resp, "status_code", "unknown")
-            raise RuntimeError(error or f"authorize_continue_http_{status}{detail}, {debug}")
-        step(index, "authorize/continue 完成")
-
     def _register_user(self, email: str, password: str, index: int) -> None:
         step(index, "开始提交注册密码")
         url = f"{auth_base}/api/accounts/user/register"
@@ -717,7 +667,6 @@ class PlatformRegistrar:
             password = _random_password()
             first_name, last_name = _random_name()
             self._platform_authorize(email, index)
-            self._authorize_continue(email, index)
             self._register_user(email, password, index)
             self._send_otp(index)
             step(index, "开始等待注册验证码")

@@ -15,9 +15,9 @@
   "log_request_text_max_length": 100000,
   "proxy": "",
   "proxy_runtime": {
-    "enabled": false,
+    "enabled": true,
     "egress_mode": "single_proxy",
-    "proxy_url": "http://privoxy:8118",
+    "proxy_url": "http://127.0.0.1:7890",
     "resource_proxy_url": "",
     "skip_ssl_verify": true,
     "reset_session_status_codes": [
@@ -30,7 +30,7 @@
       "cf_clearance": "",
       "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
       "browser": "chrome",
-      "flaresolverr_url": "http://flaresolverr:8191",
+      "flaresolverr_url": "http://127.0.0.1:8191",
       "timeout_sec": 60,
       "refresh_interval": 3600,
       "warm_up_on_start": true
