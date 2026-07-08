@@ -1323,6 +1323,58 @@ def _generate_single_image(
                 outputs.append(output)
             if returned_message:
                 account_service.mark_image_result(token, False)
+                # 如果开启了 slug 备用回退，且当前生图没有返回任何结果图片，
+                # 尝试用备用 slug 重新生成
+                if not returned_result:
+                    fallback_slugs = backend._get_fallback_image_slugs(request.model)
+                    if fallback_slugs:
+                        for fallback_slug in fallback_slugs:
+                            logger.info({
+                                "event": "image_fallback_slug_retry",
+                                "fallback_slug": fallback_slug,
+                                "index": index,
+                            })
+                            backend._override_image_slug = fallback_slug
+                            try:
+                                fallback_outputs: list[ImageOutput] = []
+                                for fb_output in stream_fn(backend, request, index, total):
+                                    if account_email and not fb_output.account_email:
+                                        fb_output.account_email = account_email
+                                    if fb_output.kind == "message" and request.message_as_error:
+                                        raise ImageGenerationError(
+                                            fb_output.text or "Image generation was rejected by upstream policy.",
+                                            status_code=400,
+                                            error_type="invalid_request_error",
+                                            code="content_policy_violation",
+                                            account_email=account_email,
+                                            conversation_id=fb_output.conversation_id,
+                                        )
+                                    fallback_outputs.append(fb_output)
+                                    if fb_output.kind == "result":
+                                        logger.info({
+                                            "event": "image_fallback_slug_success",
+                                            "fallback_slug": fallback_slug,
+                                            "index": index,
+                                        })
+                                        return fallback_outputs
+                                logger.warning({
+                                    "event": "image_fallback_slug_also_failed",
+                                    "fallback_slug": fallback_slug,
+                                    "index": index,
+                                })
+                            except (ImagePollTimeoutError, ImageContentPolicyError, ImageGenerationError) as fb_exc:
+                                logger.warning({
+                                    "event": "image_fallback_slug_error",
+                                    "fallback_slug": fallback_slug,
+                                    "index": index,
+                                    "error": str(fb_exc)[:200],
+                                })
+                                continue
+                        backend._override_image_slug = None
+                        logger.warning({
+                            "event": "image_fallback_all_exhausted",
+                            "index": index,
+                        })
                 return outputs
             if not returned_result:
                 account_service.mark_image_result(token, False)

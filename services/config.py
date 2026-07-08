@@ -519,6 +519,11 @@ class ConfigStore:
         return path
 
     @property
+    def image_model(self) -> dict[str, object]:
+        value = self.data.get("image_model")
+        return value if isinstance(value, dict) else {}
+
+    @property
     def image_thumbnails_dir(self) -> Path:
         path = DATA_DIR / "image_thumbnails"
         path.mkdir(parents=True, exist_ok=True)
@@ -576,6 +581,7 @@ class ConfigStore:
         data["chat_completion_cache"] = self.get_chat_completion_cache_settings()
         data["proxy_runtime"] = self.get_public_proxy_runtime_settings()
         data["third_party_apps"] = self.get_third_party_apps_settings()
+        data["image_model"] = self.image_model
         data.pop("auth-key", None)
         return data
 

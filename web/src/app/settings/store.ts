@@ -321,6 +321,7 @@ type SettingsStore = {
   setProxyRuntimeClearanceField: <K extends keyof ProxyRuntimeSettings["clearance"]>(key: K, value: ProxyRuntimeSettings["clearance"][K]) => void;
   setProxyRuntimeStatusCodesText: (value: string) => void;
   setInfiniteCanvasField: <K extends keyof ThirdPartyAppsSettings["infinite_canvas"]>(key: K, value: ThirdPartyAppsSettings["infinite_canvas"][K]) => void;
+  setImageModelField: (key: string, value: string | boolean) => void;
   testImageStorage: () => Promise<void>;
   syncImagesToWebDAV: () => Promise<void>;
   setBackupField: (key: keyof BackupSettings, value: string | boolean) => void;
@@ -741,6 +742,22 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
               [key]: value,
             },
           },
+        },
+      };
+    });
+  },
+
+  setImageModelField: (key, value) => {
+    set((state) => {
+      if (!state.config) {
+        return {};
+      }
+      const imageModel = { ...((state.config.image_model || {}) as Record<string, unknown>) };
+      imageModel[key] = value;
+      return {
+        config: {
+          ...state.config,
+          image_model: imageModel,
         },
       };
     });

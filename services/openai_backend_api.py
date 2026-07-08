@@ -167,6 +167,7 @@ class OpenAIBackendAPI:
         self.pow_script_sources: list[str] = []
         self.pow_data_build = ""
         self.progress_callback: Callable[[str], None] | None = None
+        self._override_image_slug: str | None = None
         self.session = requests.Session(**proxy_settings.build_session_kwargs(
             account=self.account,
             impersonate=self.fp["impersonate"],
@@ -550,15 +551,50 @@ class OpenAIBackendAPI:
         return payload
 
     def _image_model_slug(self, model: str) -> str:
-        """把标准图片模型名映射到底层 model slug。"""
+        """把标准图片模型名映射到底层 model slug，支持从 settings 页面配置。"""
+        # 实例级覆盖（用于 fallback 回退）
+        if self._override_image_slug:
+            return self._override_image_slug
         _, base_model = split_image_model(model)
         if not base_model:
             return "auto"
+        # 从 config 的 image_model 字典中读取映射关系
+        image_model_config = config.data.get("image_model", {})
+        if isinstance(image_model_config, dict):
+            slug = image_model_config.get(base_model)
+            if slug and isinstance(slug, str) and slug.strip():
+                return slug.strip()
         if base_model == "gpt-image-2":
-            return "gpt-5-3"
+            return "gpt-5-5-thinking"
         if base_model == CODEX_IMAGE_MODEL:
             return base_model
         return "auto"
+
+    def _get_fallback_image_slugs(self, model: str) -> list[str]:
+        """获取当前模型的备用 slug 列表（当 fallback_enabled 时使用）。"""
+        image_model_config = config.data.get("image_model", {})
+        if not isinstance(image_model_config, dict):
+            return []
+        fallback_enabled = image_model_config.get("fallback_enabled")
+        if isinstance(fallback_enabled, str):
+            fallback_enabled = fallback_enabled.lower() in {"1", "true", "yes", "on"}
+        elif not isinstance(fallback_enabled, bool):
+            fallback_enabled = True  # 默认开启
+        if not fallback_enabled:
+            return []
+        _, base_model = split_image_model(model)
+        if not base_model:
+            return []
+        # 从 config 中读取定义的备用 slug，或使用默认列表
+        configured_slugs = image_model_config.get("fallback_slugs")
+        default_fallback = ["gpt-5-3", "gpt-5-5", "auto"]
+        if isinstance(configured_slugs, list) and configured_slugs:
+            fallback_slugs = [str(s) for s in configured_slugs if isinstance(s, str) and s.strip()]
+        else:
+            fallback_slugs = list(default_fallback)
+        # 排除当前正在使用的 slug
+        current_slug = self._image_model_slug(model)
+        return [s for s in fallback_slugs if s != current_slug and s != "auto" or (s == "auto" and current_slug != "auto")]
 
     def _image_headers(self, path: str, requirements: ChatRequirements, conduit_token: str = "", accept: str = "*/*") -> \
             Dict[str, str]:

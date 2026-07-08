@@ -183,6 +183,7 @@ export type SettingsConfig = {
   third_party_apps?: ThirdPartyAppsSettings;
   backup?: BackupSettings;
   backup_state?: BackupState;
+  image_model?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
